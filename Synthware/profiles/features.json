@@ -1,0 +1,6 @@
+{
+    "new": ["Skin Changer", "Auto Martin", "Auto Grim", "Auto Miner", "Auto Cyber", "Phase Mine", "Match History", "Fast Interact"],
+    "updated": ["Bed Protector", "Auto Metal", "Auto Consume"],
+    "removed": ["Krystal Disabler"],
+    "unsupported": []
+}

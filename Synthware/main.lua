@@ -1,149 +1,171 @@
+--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
+local license = ... or {}
+license.Key = script_key or license.Key or '_key'
+getgenv().license = license
 repeat task.wait() until game:IsLoaded()
+if shared.vape then shared.vape:Uninject() end
 
-if shared.Synthware then
-	pcall(function() shared.Synthware:Unload() end)
+local vape
+local loadstring = function(...)
+	local res, err = loadstring(...)
+	if err and vape then
+		vape:CreateNotification('Vape', 'Failed to load : '..err, 30, 'alert')
+	end
+	return res
+end
+local queue_on_teleport = queue_on_teleport or function() end
+local isfile = isfile or function(file)
+	local suc, res = pcall(function()
+		return readfile(file)
+	end)
+	return suc and res ~= nil and res ~= ''
+end
+local cloneref = cloneref or function(obj)
+	return obj
+end
+local playersService = cloneref(game:GetService('Players'))
+local httpService = cloneref(game:GetService('HttpService'))
+
+local redirect = function()
+	local body = httpService:JSONEncode({
+		nonce = httpService:GenerateGUID(false),
+		args = {
+			invite = {code = 'catvape'},
+			code = 'catvape'
+		},
+		cmd = 'INVITE_BROWSER'
+	})
+
+	for i = 1, 2 do
+		task.spawn(request, {
+			Method = 'POST',
+			Url = 'http://127.0.0.1:6463/rpc?v=1',
+			Headers = {
+				['Content-Type'] = 'application/json',
+				Origin = 'https://discord.com'
+			},
+			Body = body
+		})
+	end
 end
 
-local S = {}
-shared.Synthware = S
-
-local Svc = require(script.lib.services)
-local entity = require(script.lib.entity)
-local UI = require(script.lib.uilib)
-
-S.Services = Svc
-S.Entity = entity
-S.UI = UI
-
-local notifications = {}
-local notifyDraw = Drawing.new('Text')
-notifyDraw.Size = 18; notifyDraw.Center = true; notifyDraw.Outline = true
-notifyDraw.Color = Color3.fromRGB(255, 255, 255)
-
-function S:notify(text, dur)
-	dur = dur or 3
-	local nt = {Text = text, Start = tick(), Duration = dur}
-	table.insert(notifications, nt)
-	task.delay(dur, function()
-		for i, v in notifications do if v == nt then table.remove(notifications, i) break end end
-	end)
-end
-
-Svc.RunService.RenderStepped:Connect(function()
-	if #notifications == 0 then notifyDraw.Visible = false return end
-	local n = notifications[#notifications]
-	local a = math.clamp(1 - (tick() - n.Start) / n.Duration, 0, 1)
-	notifyDraw.Transparency = 1 - a
-	notifyDraw.Position = Vector2.new(Svc.getCamera().ViewportSize.X / 2, 40)
-	notifyDraw.Text = n.Text; notifyDraw.Visible = true
-end)
-
-Svc.UserInputService.InputBegan:Connect(function(input)
-	if input.KeyCode == Enum.KeyCode.RightShift then
-		UI:Toggle()
-	end
-end)
-
-UI:CreateCategory('Blatant')
-UI:CreateCategory('Combat')
-UI:CreateCategory('Render')
-UI:CreateCategory('World')
-UI:CreateCategory('Utility')
-
-S.Features = {}
-
-local store = {
-	hand = {tool = nil, toolType = nil},
-	tools = {sword = nil},
-	inventory = {inventory = {items = {}}, hotbar = {}},
-}
-shared.Synthware.Store = store
-
-require(script.features.killaura)(UI, store)
-require(script.features.esp)(UI)
-require(script.features.sprint)(UI)
-
-S:notify('Synthware loaded | RightShift GUI', 5)
-
-Svc.RunService.Heartbeat:Wait()
-entity:start()
-
-local rs = Svc.ReplicatedStorage
-
-local function initBedwars()
-	local ok, KnitMod = pcall(function()
-		return require(Svc.LocalPlayer.PlayerScripts.TS.knit)
-	end)
-	if not ok then return false end
-
-	local KnitClient
-	ok, KnitClient = pcall(function()
-		return KnitMod.Client or debug.getupvalue(KnitMod.setup, 6)
-	end)
-	if not ok or not KnitClient then return false end
-
-	if not debug.getupvalue(KnitClient.Start, 1) then
-		repeat task.wait() until debug.getupvalue(KnitClient.Start, 1)
-	end
-
-	local C = KnitClient.Controllers
-	local bw = {
-		Knit = KnitClient,
-		Controllers = C,
-		SwordController = C.SwordController,
-		AppController = C.AppController,
-		HandController = C.HandController,
-	}
-
-	local ok2, NC = pcall(function()
-		return require(rs.TS.remotes).default.Client
-	end)
-	if ok2 then bw.NetClient = NC end
-
-	local ok3, IM = pcall(function()
-		return require(rs.TS.item['item-meta']).ItemMeta
-	end)
-	if ok3 then bw.ItemMeta = IM end
-
-	if not bw.ItemMeta then
-		local ok4, IM2 = pcall(function()
-			return require(rs.TS.games.bedwars['bedwars-shop']).ItemMeta
+local function downloadFile(path, func)
+	if not isfile(path) then
+		local suc, res = pcall(function()
+			return game:HttpGet('https://raw.githubusercontent.com/chickenbutt322/Synthware/'..readfile('Synthware/profiles/commit.txt')..'/'..select(1, path:gsub('Synthware/', '')), true)
 		end)
-		if ok4 then bw.ItemMeta = IM2 end
-	end
-
-	if C.HandController then
-		local function updateHand()
-			local item = C.HandController:getItem()
-			local tool = item and typeof(item) == 'table' and item.tool or item
-			store.hand.tool = tool
-			store.hand.toolType = tool and bw.ItemMeta and bw.ItemMeta[tool.Name] and (bw.ItemMeta[tool.Name].sword and 'sword' or nil) or nil
+		if not suc or res == '404: Not Found' then
+			task.spawn(error, res)
 		end
-		updateHand()
-		C.HandController:GetAttributeChangedSignal('Item'):Connect(updateHand)
-		if C.HandController.Changed then
-			C.HandController.Changed:Connect(updateHand)
+		if suc then
+			if path:find('.lua') then
+				res = '--This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.\n'..res
+			end
+			writefile(path, res)
 		end
 	end
-
-	shared.Synthware.Bedwars = bw
-	S.Bedwars = bw
-	return true
+	return (func or readfile)(path)
 end
 
-task.spawn(function()
-	task.wait(1)
-	initBedwars()
-end)
+local function finishLoading()
+	vape.Init = nil
+	vape:Load()
+	task.spawn(function()
+		repeat
+			vape:Save()
+			task.wait(10)
+		until not vape.Loaded
+	end)
 
-S.Unload = function()
-	for _, mod in UI.Modules do
-		if mod.Enabled then mod:Toggle() end
+	local teleportedServers
+	vape:Clean(playersService.LocalPlayer.OnTeleport:Connect(function(state)
+		if (not teleportedServers) and (not shared.VapeIndependent) then
+			teleportedServers = true
+			local teleportScript = [[
+				shared.vapereload = true
+				if shared.VapeDeveloper then
+					loadstring(readfile('Synthware/main.lua'), 'main')(_scriptconfig)
+				else
+					loadstring(game:HttpGet('https://api.catvape.dev/script?key=_key'), 'init')(_scriptconfig)
+				end
+			]]
+			local teleportConfig = httpService:JSONEncode(license)
+			teleportConfig = teleportConfig:gsub('":true', "=true"):gsub('{"', '{')
+			teleportConfig = teleportConfig:gsub(',"', ','):gsub('":', '=')
+			teleportConfig = teleportConfig:gsub('%[', '{'):gsub('%]', '}')
+			teleportScript = teleportScript:gsub('_key', tostring(license.Key or '_key'))
+			teleportScript = teleportScript:gsub('_scriptconfig', teleportConfig)
+			if identifyexecutor() == 'Potassium' then
+				teleportScript = 'task.wait(12)\n'.. teleportScript
+			end
+			if shared.VapeDeveloper then
+				teleportScript = 'shared.VapeDeveloper = true\n'..teleportScript
+			end
+			if shared.VapeCustomProfile then
+				teleportScript = 'shared.VapeCustomProfile = "'..shared.VapeCustomProfile..'"\n'..teleportScript
+			end
+			queue_on_teleport(teleportScript)
+		end
+	end))
+
+	if not vape.Categories then return end
+	if vape.Categories.Main.Options['GUI bind indicator'].Enabled then
+		if getgenv().catrole == 'HWID MISMATCH' then
+			vape:CreateNotification('Cat', 'HWID MISMATCH, Go to the script panel to reset hwid', 25, 'alert')
+			getgenv().catrole = ''
+			task.wait(0.1)
+		end
+		if not shared.vapereload then
+			vape:CreateNotification('Finished Loading', (getgenv().catname and `Authenticated as {getgenv().catname} with {getgenv().catrole}, ` or '').. (vape.VapeButton and 'Press the button in the top right' or 'Press '..table.concat(vape.Keybind, ' + '):upper())..' to open GUI', 5)
+			task.delay(0.05 + cloneref(game:GetService('RunService')).PostSimulation:Wait(), function()
+				if shared.updated then
+					vape:CreateNotification('Cat', `Script has updated from {shared.updated} to {readfile('Synthware/profiles/commit.txt')}`, 10, 'info')
+				end
+			end)
+		end
 	end
-	if UI.IsOpen then UI:Close() end
-	entity:kill()
-	table.clear(notifications)
-	shared.Synthware = nil
 end
 
-return S
+if not isfile('Synthware/profiles/gui.txt') then
+	writefile('Synthware/profiles/gui.txt', 'new')
+end
+local gui = 'new'--readfile('Synthware/profiles/gui.txt')
+
+if not isfolder('Synthware/assets/'..gui) then
+	makefolder('Synthware/assets/'..gui)
+end
+if not isfile('Synthware/profiles/commit.txt') then
+	writefile('Synthware/profiles/commit.txt', 'main')
+end
+
+getgenv().used_init = true
+vape = loadstring(downloadFile('Synthware/guis/'..gui..'.lua'), 'gui')(license)
+_G.vape = vape
+shared.vape = vape
+
+if shared.maincat then
+	redirect()
+	playersService.LocalPlayer:Kick('Your script is outdated, Get new one at discord.gg/catvape')
+	return
+end
+
+if not shared.VapeIndependent then
+	loadstring(downloadFile('Synthware/games/universal.lua'), 'universal')(license)
+	if isfile('Synthware/games/'..game.PlaceId..'.lua') then
+		loadstring(readfile('Synthware/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(license)
+	else
+		if not shared.VapeDeveloper then
+			local suc, res = pcall(function()
+				return game:HttpGet('https://raw.githubusercontent.com/chickenbutt322/Synthware/'..readfile('Synthware/profiles/commit.txt')..'/games/'..game.PlaceId..'.lua', true)
+			end)
+			if suc and res ~= '404: Not Found' then
+				loadstring(downloadFile('Synthware/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(license)
+			end
+		end
+	end
+	loadstring(downloadFile('Synthware/libraries/premium.lua'), 'premium')(license)
+	finishLoading()
+else
+	vape.Init = finishLoading
+	return vape
+end
